@@ -1,5 +1,7 @@
 import CompetitionModel from "../models/CompetitionSchema.js";
 import PuzzleModel from "../models/PuzzleSchema.js";
+import ParticipantModel from "../models/ParticipantSchema.js";
+import mongoose from "mongoose";
 
 // Create a new competition
 export const createCompetition = async (req, res) => {
@@ -300,7 +302,6 @@ export const joinCompetition = async (req, res) => {
   try {
     const { id } = req.params;
     const { accessCode } = req.body;
-    console.log(accessCode);
     const userId = req.user._id;
 
     const competition = await CompetitionModel.findById(id);
@@ -308,47 +309,46 @@ export const joinCompetition = async (req, res) => {
       return res.status(404).json({ message: "Competition not found" });
     }
 
-    // 🔄 Recalculate active status based on current time to avoid stale `isActive`
-    const now = new Date();
-    const start = new Date(competition.startTime);
-    const end = new Date(competition.endTime);
-
-    const isWithinWindow = now >= start && now <= end;
-
-    if (!isWithinWindow) {
-      return res.status(400).json({ message: "Competition is not active" });
+    // 1. Strict Status Check: Only UPCOMING competitions can be joined
+    if (competition.status !== "upcoming") {
+      return res.status(400).json({
+        message: "Cannot join this competition. It check if it has already started or ended."
+      });
     }
 
-    // Ensure stored status flags are in sync when user joins
-    if (competition.status !== "live" || !competition.isActive) {
-      competition.status = "live";
-      competition.isActive = true;
-    }
-
-    // Check Access Code
+    // 2. Check Access Code
     if (competition.accessCode && competition.accessCode !== accessCode) {
       return res.status(403).json({ message: "Invalid access code", requireCode: true });
     }
 
-    // Check if already joined
-    const alreadyJoined = competition.participants.some(
-      (p) => p.user.toString() === userId.toString()
-    );
+    // 3. Check if already joined (via ParticipantModel)
+    const existingParticipant = await ParticipantModel.findOne({
+      competitionId: id,
+      userId: userId
+    });
 
-    if (alreadyJoined) {
-      return res
-        .status(400)
-        .json({ message: "Already joined this competition" });
+    if (existingParticipant) {
+      return res.status(400).json({ message: "Already joined this competition" });
     }
 
-    // Check max participants
-    if (
-      competition.maxParticipants &&
-      competition.participants.length >= competition.maxParticipants
-    ) {
-      return res.status(400).json({ message: "Competition is full" });
+    // 4. Check max participants
+    if (competition.maxParticipants) {
+      const count = await ParticipantModel.countDocuments({ competitionId: id });
+      if (count >= competition.maxParticipants) {
+        return res.status(400).json({ message: "Competition is full" });
+      }
     }
 
+    // 5. Create Participant Entry
+    await ParticipantModel.create({
+      competitionId: id,
+      userId: userId,
+      username: req.user.username || req.user.name, // Fallback
+      status: 'waiting',
+      joinedAt: new Date()
+    });
+
+    // 6. Sync with embedded array (Legacy Support)
     competition.participants.push({
       user: userId,
       score: 0,
@@ -424,6 +424,18 @@ export const submitSolution = async (req, res) => {
 
       await competition.save();
 
+      // Emit update to lobby
+      if (req.io) {
+        req.io.to(`competition_${id}`).emit('participantUpdate', {
+          userId,
+          score: participant.score,
+          status: participant.status
+        });
+
+        // Also refresh leaderboard if necessary
+        // req.io.to(`competition_${id}`).emit('leaderboardUpdate', ...);
+      }
+
       res.status(200).json({
         message: "Solution correct!",
         points,
@@ -435,6 +447,49 @@ export const submitSolution = async (req, res) => {
   } catch (error) {
     console.error("Error submitting solution:", error);
     res.status(500).json({ message: "Failed to submit solution" });
+  }
+};
+
+// Finish participation (User manually finishes)
+export const finishParticipation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    const competition = await CompetitionModel.findById(id);
+    if (!competition) {
+      return res.status(404).json({ message: "Competition not found" });
+    }
+
+    const participant = competition.participants.find(
+      (p) => p.user.toString() === userId.toString()
+    );
+
+    if (!participant) {
+      return res.status(400).json({ message: "Not a participant" });
+    }
+
+    // Update internal status
+    participant.status = 'submitted'; // or 'completed'
+    // Update standalone model too
+    await ParticipantModel.findOneAndUpdate(
+      { competitionId: id, userId: userId },
+      { status: 'submitted', lastActivity: new Date() }
+    );
+
+    await competition.save();
+
+    if (req.io) {
+      req.io.to(`competition_${id}`).emit('participantUpdate', {
+        userId,
+        status: 'submitted'
+      });
+    }
+
+    res.status(200).json({ message: "Competition finished successfully" });
+  } catch (error) {
+    console.error("Error finishing competition:", error);
+    res.status(500).json({ message: "Failed to finish competition" });
   }
 };
 
@@ -484,6 +539,7 @@ export default {
   deleteCompetition,
   joinCompetition,
   submitSolution,
+  finishParticipation,
   getLeaderboard,
   getPuzzlesForCompetition,
 };

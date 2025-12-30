@@ -7,6 +7,7 @@ import {
   deleteCompetition,
   joinCompetition,
   submitSolution,
+  finishParticipation,
   getLeaderboard,
   getPuzzlesForCompetition
 } from '../controllers/competition.controller.js';
@@ -26,6 +27,7 @@ router.delete('/delete-competition/:id', isAdmin, deleteCompetition);
 // User routes
 router.post('/:id/join', isUser, joinCompetition);
 router.post('/:id/submit/:puzzleId', isUser, submitSolution);
+router.post('/:id/finish', isUser, finishParticipation);
 router.get('/:id/leaderboard', getLeaderboard);
 
 export default router;
