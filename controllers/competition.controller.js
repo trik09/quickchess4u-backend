@@ -456,6 +456,8 @@ export const finishParticipation = async (req, res) => {
     const { id } = req.params;
     const userId = req.user._id;
 
+    console.log(`[Finish] Request received for Competition: ${id}, User: ${userId}`);
+
     const competition = await CompetitionModel.findById(id);
     if (!competition) {
       return res.status(404).json({ message: "Competition not found" });
@@ -470,14 +472,18 @@ export const finishParticipation = async (req, res) => {
     }
 
     // Update internal status
+    console.log(`[Finish] Found participant for user ${userId}. Updating status...`);
+
     participant.status = 'submitted'; // or 'completed'
     // Update standalone model too
     await ParticipantModel.findOneAndUpdate(
       { competitionId: id, userId: userId },
       { status: 'submitted', lastActivity: new Date() }
     );
+    console.log(`[Finish] Updated ParticipantModel.`);
 
     await competition.save();
+    console.log(`[Finish] Saved competition.`);
 
     if (req.io) {
       req.io.to(`competition_${id}`).emit('participantUpdate', {
@@ -531,6 +537,31 @@ export const getLeaderboard = async (req, res) => {
   }
 };
 
+// Get current participant status (for persistence)
+export const getParticipantStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    const participant = await ParticipantModel.findOne({
+      competitionId: id,
+      userId: userId
+    });
+
+    if (!participant) {
+      return res.status(404).json({ message: "Participant record not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: participant
+    });
+  } catch (error) {
+    console.error("Error fetching participant status:", error);
+    res.status(500).json({ message: "Failed to fetch status" });
+  }
+};
+
 export default {
   createCompetition,
   getCompetitions,
@@ -542,4 +573,5 @@ export default {
   finishParticipation,
   getLeaderboard,
   getPuzzlesForCompetition,
+  getParticipantStatus
 };

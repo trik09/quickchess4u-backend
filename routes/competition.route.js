@@ -9,7 +9,8 @@ import {
   submitSolution,
   finishParticipation,
   getLeaderboard,
-  getPuzzlesForCompetition
+  getPuzzlesForCompetition,
+  getParticipantStatus
 } from '../controllers/competition.controller.js';
 import isAdmin from '../middleware/admin.middleware.js';
 import isUser from '../middleware/user.middleware.js';
@@ -28,6 +29,7 @@ router.delete('/delete-competition/:id', isAdmin, deleteCompetition);
 router.post('/:id/join', isUser, joinCompetition);
 router.post('/:id/submit/:puzzleId', isUser, submitSolution);
 router.post('/:id/finish', isUser, finishParticipation);
+router.get('/:id/status', isUser, getParticipantStatus);
 router.get('/:id/leaderboard', getLeaderboard);
 
 export default router;
