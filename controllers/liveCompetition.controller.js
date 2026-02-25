@@ -60,9 +60,9 @@ export const participateInCompetition = async (req, res) => {
     }
 
     // Check max participants
+    const participantCount = await ParticipantModel.countDocuments({ competitionId });
     if (competition.maxParticipants) {
-      const currentParticipants = await ParticipantModel.countDocuments({ competitionId });
-      if (currentParticipants >= competition.maxParticipants) {
+      if (participantCount >= competition.maxParticipants) {
         return res.status(400).json({
           success: false,
           error: 'Competition is full'
@@ -108,8 +108,9 @@ export const participateInCompetition = async (req, res) => {
           userId: existingParticipant.userId.toString(),
         });
         // Also send fresh leaderboard to all
-        const leaderboard = await getCurrentLeaderboard(competitionId);
-        io.to(roomName).emit('leaderboardUpdate', leaderboard);
+        getCurrentLeaderboard(competitionId).then(leaderboard => {
+          io.to(roomName).emit('leaderboardUpdate', leaderboard);
+        }).catch(err => console.error('Join leaderboard error:', err));
       } catch (emitErr) {
         console.error('Socket emit on re-join error:', emitErr);
       }
@@ -126,7 +127,7 @@ export const participateInCompetition = async (req, res) => {
           endTime: competition.endTime,
           duration: competition.duration,
           status: competition.status,
-          participantCount: await ParticipantModel.countDocuments({ competitionId })
+          participantCount
         }
       });
     }
@@ -177,9 +178,10 @@ export const participateInCompetition = async (req, res) => {
         username: participant.username,
         userId: participant.userId.toString(),
       });
-      const leaderboard = await getCurrentLeaderboard(competitionId);
-      io.to(roomName).emit('leaderboardUpdate', leaderboard);
-      console.log('Emitted participantJoined + leaderboardUpdate to room:', roomName);
+      getCurrentLeaderboard(competitionId).then(leaderboard => {
+        io.to(roomName).emit('leaderboardUpdate', leaderboard);
+        console.log('Emitted participantJoined + leaderboardUpdate to room:', roomName);
+      }).catch(err => console.error('Join leaderboard error:', err));
     } catch (emitErr) {
       console.error('Socket emit on join error:', emitErr);
     }
@@ -199,7 +201,7 @@ export const participateInCompetition = async (req, res) => {
         chapters: competition.chapters || [],
         maxScore: competition.puzzles.length * 10,
         status: competition.status,
-        participantCount: await ParticipantModel.countDocuments({ competitionId })
+        participantCount: participantCount + 1
       }
     });
 
@@ -257,12 +259,14 @@ export const submitCompetition = async (req, res) => {
     participant.status = "SUBMITTED";
     await participant.save();
 
-    // Get updated leaderboard
-    const updatedLeaderboard = await getCurrentLeaderboard(competitionId);
-
     // Notify all participants via Socket.IO
     const roomName = `competition_${competitionId}`;
-    io.to(roomName).emit('leaderboardUpdate', updatedLeaderboard);
+
+    // Async leaderboard broadcast
+    getCurrentLeaderboard(competitionId).then(updatedLeaderboard => {
+      io.to(roomName).emit('leaderboardUpdate', updatedLeaderboard);
+    }).catch(err => console.error('Submit leaderboard error:', err));
+
     io.to(roomName).emit('participantSubmitted', {
       username: participant.username,
       score: participant.score,
@@ -457,8 +461,10 @@ export const submitPuzzleSolution = async (req, res) => {
         console.error(`[Leaderboard] Redis zadd error in submit:`, redisError);
       }
 
-      const leaderboard = await getCurrentLeaderboard(competitionId);
-      io.to(`competition_${competitionId}`).emit("leaderboardUpdate", leaderboard);
+      // Broadcast leaderboard updates asynchronously
+      getCurrentLeaderboard(competitionId).then(leaderboard => {
+        io.to(`competition_${competitionId}`).emit("leaderboardUpdate", leaderboard);
+      }).catch(err => console.error('Puzzle solve leaderboard error:', err));
 
       // Emit live score update for immediate feedback in lobby
       io.to(`competition_${competitionId}`).emit("liveScoreUpdate", {
