@@ -125,9 +125,10 @@ export const participateInCompetition = async (req, res) => {
     // Run Redis + Socket operations in background
     setImmediate(async () => {
       try {
-        if (competition.status === "LIVE") {
-          await addParticipantToLeaderboard(competition._id, participant);
-        }
+        // Always keep Redis leaderboard in sync so lobby views
+        // (which may read from Redis cache) see ALL participants,
+        // even while the competition is still UPCOMING.
+        await addParticipantToLeaderboard(competition._id, participant);
 
         const roomName = `competition_${competitionId}`;
 
@@ -136,8 +137,12 @@ export const participateInCompetition = async (req, res) => {
           userId: participant.userId.toString(),
         });
 
+        // Broadcast latest leaderboard to everyone in the room.
+        // Note: addParticipantToLeaderboard already emits a
+        // "leaderboardUpdate" event after syncing Redis, so this
+        // extra emit is mainly a safety net and can be removed
+        // later if desired.
         const leaderboard = await getCurrentLeaderboard(competitionId);
-
         io.to(roomName).emit("leaderboardUpdate", leaderboard);
       } catch (err) {
         console.error("Background event error:", err);
@@ -192,14 +197,59 @@ export const submitCompetition = async (req, res) => {
     }
 
     // Mark participant as submitted (add submittedAt field)
-    participant.submittedAt = new Date();
+    const submittedAt = new Date();
+    participant.submittedAt = submittedAt;
     participant.isActive = false; // Mark as inactive to prevent further submissions
     participant.isSubmitted = true;
     participant.status = "SUBMITTED";
+
+    // Compute total elapsed time the user actually spent in the live competition,
+    // from when they were eligible to play (competition start OR their join time,
+    // whichever is later) up to when they clicked submit.
+    const effectiveStart = (() => {
+      const start = competition.startTime instanceof Date
+        ? competition.startTime
+        : new Date(competition.startTime);
+
+      // If they joined after the official start, measure from join; otherwise from start.
+      if (participant.joinedAt && participant.joinedAt > start) {
+        return participant.joinedAt;
+      }
+      return start;
+    })();
+
+    if (effectiveStart) {
+      const elapsedMs = submittedAt.getTime() - effectiveStart.getTime();
+      if (elapsedMs > 0) {
+        participant.timeSpent = Math.floor(elapsedMs / 1000); // seconds
+      }
+    }
+
     await participant.save();
 
     // Notify all participants via Socket.IO
     const roomName = `competition_${competitionId}`;
+
+    // Sync Redis leaderboard with final submitted stats for this user
+    try {
+      const entry = {
+        userId: participant.userId.toString(),
+        username: participant.username,
+        score: participant.score || 0,
+        puzzlesSolved: participant.puzzlesSolved || 0,
+        timeSpent: participant.timeSpent || 0,
+        status: participant.status || "SUBMITTED",
+        submittedAt: participant.submittedAt || null,
+      };
+
+      await redis.zadd(
+        leaderboardKey(competitionId),
+        redisScore(participant),
+        JSON.stringify(entry)
+      );
+    } catch (redisError) {
+      console.error("[Leaderboard] Redis zadd error in submitCompetition:", redisError);
+    }
 
     // Async leaderboard broadcast
     getCurrentLeaderboard(competitionId).then(updatedLeaderboard => {
@@ -220,7 +270,7 @@ export const submitCompetition = async (req, res) => {
       $or: [{ isSubmitted: true }, { submittedAt: { $exists: true } }]
     });
 
-    console.log(`Competition ${competitionId} progress: ${submittedParticipants}/${totalParticipants} submitted`);
+   // console.log(`Competition ${competitionId} progress: ${submittedParticipants}/${totalParticipants} submitted`);
 
     res.json({
       success: true,
@@ -333,6 +383,14 @@ export const submitPuzzleSolution = async (req, res) => {
     }
 
     /* ================= HANDLE SOLUTION RESULT ================= */
+    const effectiveStart = new Date(
+      Math.max(
+        new Date(competition.startTime).getTime(),
+        new Date(participant.joinedAt || new Date()).getTime()
+      )
+    ).getTime();
+    const currentTotalTime = Math.max(0, Math.floor((new Date().getTime() - effectiveStart) / 1000));
+
     if (isCorrect) {
       // CORRECT SOLUTION
       const scoreEarned = calculateScore(puzzle.difficulty, timeSpent);
@@ -353,12 +411,12 @@ export const submitPuzzleSolution = async (req, res) => {
         { upsert: true, new: true }
       );
 
-      console.log('Created/updated puzzle attempt (solved):', {
-        puzzleId,
-        userId,
-        status: puzzleAttempt.status,
-        isLocked: puzzleAttempt.isLocked
-      });
+      //console.log('Created/updated puzzle attempt (solved):', {
+      //   puzzleId,
+      //   userId,
+      //   status: puzzleAttempt.status,
+      //   isLocked: puzzleAttempt.isLocked
+      // });
 
       // Create puzzle solution record (for backward compatibility)
       const puzzleSolution = new PuzzleSolutionModel({
@@ -381,7 +439,9 @@ export const submitPuzzleSolution = async (req, res) => {
           $inc: {
             score: scoreEarned,
             puzzlesSolved: 1,
-            timeSpent: timeSpent,
+          },
+          $set: {
+            timeSpent: currentTotalTime,
           },
           lastActivity: new Date(),
         },
@@ -389,12 +449,24 @@ export const submitPuzzleSolution = async (req, res) => {
       );
 
       /* ================= UPDATE REDIS + BROADCAST ================= */
-      // Sync Redis sorted set with fresh score BEFORE reading leaderboard
+      // Sync Redis sorted set with fresh score BEFORE reading leaderboard.
+      // IMPORTANT: store full JSON entry (not just userId string) so that
+      // getCurrentLeaderboard (and thus the lobby) sees up-to-date fields
+      // like puzzlesSolved, timeSpent and score for every participant.
       try {
+        const entry = {
+          userId: updatedParticipant.userId.toString(),
+          username: updatedParticipant.username,
+          score: updatedParticipant.score || 0,
+          puzzlesSolved: updatedParticipant.puzzlesSolved || 0,
+          timeSpent: updatedParticipant.timeSpent || 0,
+          status: updatedParticipant.status || "JOINED",
+        };
+
         await redis.zadd(
           leaderboardKey(competitionId),
           redisScore(updatedParticipant),
-          userId.toString()
+          JSON.stringify(entry)
         );
       } catch (redisError) {
         console.error(`[Leaderboard] Redis zadd error in submit:`, redisError);
@@ -455,8 +527,8 @@ export const submitPuzzleSolution = async (req, res) => {
       const updatedParticipant = await ParticipantModel.findOneAndUpdate(
         { competitionId, userId },
         {
-          $inc: {
-            timeSpent: timeSpent,
+          $set: {
+            timeSpent: currentTotalTime,
           },
           lastActivity: new Date(),
         },
@@ -813,53 +885,67 @@ export const getLobbyState = async (req, res) => {
   try {
     const { competitionId } = req.params;
     const userId = req.user._id;
+    const now = new Date();
 
-    // 1. Competition lao with puzzles populated
-    const competition = await CompetitionModel.findById(competitionId).populate('puzzles');
+    // 1. Fetch competition (only required fields)
+    //console.time("competitionQuery");
+    const competition = await CompetitionModel
+      .findById(competitionId)
+      .select("name startTime endTime duration puzzles status isActive accessCode")
+      .lean();
+    //console.timeEnd("competitionQuery");
+
     if (!competition) {
-      return res.status(404).json({ success: false, message: "Competition not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Competition not found"
+      });
     }
 
-    // 2. Participant lao (sirf ParticipantModel se)
-    const participant = await ParticipantModel.findOne({
-      competitionId,
-      userId
-    });
+    // 2. Fetch participant (only status)
+    //console.time("participantQuery");
+    const participant = await ParticipantModel
+      .findOne({ competitionId, userId })
+      .select("status")
+      .lean();
+    //console.timeEnd("participantQuery");
 
-    // 3. Competition state - check time-based status
-    const now = new Date();
-    let competitionState = competition.status ? competition.status.toUpperCase() : "UPCOMING";
+    // 3. Determine competition state
+    let competitionState = competition.status?.toUpperCase() || "UPCOMING";
 
-    // Update status based on current time if needed
-    if (competitionState === "UPCOMING" && now >= competition.startTime && now <= competition.endTime) {
+    if (
+      competitionState === "UPCOMING" &&
+      now >= competition.startTime &&
+      now <= competition.endTime
+    ) {
       competitionState = "LIVE";
-      // Update in DB if needed
-      if (competition.status !== "LIVE") {
-        competition.status = "LIVE";
-        competition.isActive = true;
-        await competition.save();
-      }
-    } else if (now > competition.endTime) {
+
+      // Async update (non-blocking)
+      CompetitionModel.updateOne(
+        { _id: competitionId },
+        { status: "LIVE", isActive: true }
+      ).catch(() => {});
+    }
+
+    if (now > competition.endTime && competitionState !== "ENDED") {
       competitionState = "ENDED";
-      if (competition.status !== "ENDED") {
-        competition.status = "ENDED";
-        competition.isActive = false;
-        await competition.save();
-      }
+
+      CompetitionModel.updateOne(
+        { _id: competitionId },
+        { status: "ENDED", isActive: false }
+      ).catch(() => {});
     }
 
     // 4. Participant state
-    let participantState = "NOT_JOINED";
-    if (participant) {
-      participantState = participant.status || "JOINED";
-      // JOINED | PLAYING | SUBMITTED
-    }
+    const participantState = participant?.status || "NOT_JOINED";
 
-    // 5. Leaderboard lao
+    // 5. Leaderboard
+    console.time("leaderboardQuery");
     const leaderboard = await getCurrentLeaderboard(competitionId);
+  console.timeEnd("leaderboardQuery");
 
-    // 6. Response bhejo with total puzzle count
-    res.json({
+    // 6. Response
+    return res.json({
       success: true,
       competition: {
         id: competition._id,
@@ -867,8 +953,8 @@ export const getLobbyState = async (req, res) => {
         startTime: competition.startTime,
         endTime: competition.endTime,
         duration: competition.duration,
-        totalPuzzles: Array.isArray(competition.puzzles) ? competition.puzzles.length : 0, // Add total puzzle count
-        requiresAccessCode: !!(competition.accessCode && competition.accessCode.trim() !== '')
+        totalPuzzles: competition.puzzles?.length || 0,
+        requiresAccessCode: !!competition.accessCode?.trim()
       },
       competitionState,
       participantState,
@@ -878,7 +964,10 @@ export const getLobbyState = async (req, res) => {
 
   } catch (err) {
     console.error("Lobby state error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({
+      success: false,
+      message: "Server error"
+    });
   }
 };
 
