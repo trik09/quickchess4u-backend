@@ -102,21 +102,21 @@ const sendOTP = async (req, res) => {
     }
 
     // Check if user exists
-    console.log('🔍 Checking if user exists...');
+    console.log('Checking if user exists...');
     const user = await User.findOne({ email });
     if (!user) {
-      console.log('❌ User not found:', email);
+      console.log(' User not found:', email);
       return res.status(404).json({ message: "User not found. Please register first." });
     }
     console.log('✅ User found:', user.email);
 
     // Delete any existing OTPs for this email
-    console.log('🗑️  Deleting existing OTPs...');
+   // console.log('🗑️  Deleting existing OTPs...');
     await OTP.deleteMany({ email });
 
     // Generate new OTP
     const otp = generateOTP();
-    console.log('🔑 Generated OTP:', otp);
+    console.log('Generated otp');
 
     // Save OTP to database
     console.log('💾 Saving OTP to database...');
