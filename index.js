@@ -12,6 +12,9 @@ import puzzleRoutes from "./routes/puzzle.route.js";
 import competitionRoutes from "./routes/competition.route.js";
 import liveCompetitionRoutes from "./routes/liveCompetition.route.js";
 import categoryRoutes from "./routes/category.route.js";
+import quizCategoryRoutes from "./routes/quizCategory.route.js";
+import quizRoutes from "./routes/quiz.route.js";
+import examRoutes from "./routes/exam.route.js";
 import { Chess } from "chess.js";
 import { initializeSocketHandlers } from "./utils/socketHandlers.js";
 
@@ -79,6 +82,9 @@ app.use("/api/puzzle", puzzleRoutes)
 app.use("/api/competition", competitionRoutes)
 app.use("/api/live-competition", liveCompetitionRoutes)
 app.use("/api/category", categoryRoutes)
+app.use("/api/quiz-category", quizCategoryRoutes)
+app.use("/api/quiz", quizRoutes)
+app.use("/api/exam", examRoutes)
 
 app.get("/", (req, res) => {
   return res.status(200).json({ message: "QuickChess4U backend is running" });
