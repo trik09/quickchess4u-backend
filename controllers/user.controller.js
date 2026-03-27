@@ -44,7 +44,9 @@ const register = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = await User.create({ name, email, password: hashedPassword, username, avatar, wins, losses, draws });
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    return res.status(200).json({ message: "User registered successfully", user, token });
+    const safeUser = { name: user.name, username: user.username, email: user.email, authProvider: user.authProvider };
+
+    return res.status(200).json({ message: "User registered successfully", user:safeUser, token });
 
 
 
@@ -77,7 +79,8 @@ const login = async (req, res) => {
       {
         id: user._id
       }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    return res.status(200).json({ message: "User logged in successfully", user, token });
+    const safeUser = { name: user.name, username: user.username, email: user.email, authProvider: user.authProvider };
+    return res.status(200).json({ message: "User logged in successfully", user: safeUser, token });
   } catch (error) {
     return res.status(500).json({ message: "Internal server error" });
   }
@@ -287,10 +290,11 @@ const verifySignupOTP = async (req, res) => {
       { expiresIn: "7d" }
     );
 
+    const safeUser = { name: user.name, username: user.username, email: user.email, authProvider: user.authProvider };
     console.log('✅ User registered successfully:', user.email);
     return res.status(200).json({
       message: "User registered successfully",
-      user,
+      user: safeUser,
       token
     });
   } catch (error) {
@@ -345,9 +349,10 @@ const verifyOTP = async (req, res) => {
       { expiresIn: "7d" }
     );
 
+    const safeUser = { name: user.name, username: user.username, email: user.email, authProvider: user.authProvider };
     return res.status(200).json({
       message: "OTP verified successfully. Logged in.",
-      user,
+      user: safeUser,
       token
     });
   } catch (error) {
@@ -686,9 +691,10 @@ const googleAuth = async (req, res) => {
       { expiresIn: "7d" }
     );
 
+    const safeUser = { name: user.name, username: user.username, email: user.email, authProvider: user.authProvider };
     return res.status(200).json({
       message: "Google authentication successful",
-      user,
+      user: safeUser,
       token
     });
   } catch (error) {
