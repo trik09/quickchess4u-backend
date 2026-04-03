@@ -239,6 +239,10 @@ const createPuzzle = async (req, res) => {
       puzzleData.captureConfig = captureConfig;
     }
 
+    if (type === 'illegal' && illegalConfig) {
+      puzzleData.illegalConfig = illegalConfig;
+    }
+
     const puzzle = await PuzzleModel.create(puzzleData);
 
     return res.status(201).json({
@@ -626,7 +630,8 @@ const bulkCreatePuzzles = async (req, res) => {
           type,
           level: level || 1,
           rating: rating || 400,
-          kidsConfig: puzzle.kidsConfig,
+          captureConfig: puzzle.captureConfig,
+          illegalConfig: puzzle.illegalConfig,
           initialMove: undefined,
           firstMoveBy:
             puzzle.firstMoveBy === 'computer' ? 'computer' : 'human',
@@ -686,6 +691,7 @@ const exportPuzzles = async (req, res) => {
       level: 1,
       rating: 1,
       captureConfig: 1,
+      illegalConfig: 1,
       firstMoveBy: 1
     });
 

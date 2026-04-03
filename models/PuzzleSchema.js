@@ -37,6 +37,13 @@ const PuzzleSchema = new mongoose.Schema({
     }]
   },
 
+  // Illegal move configuration
+  illegalConfig: {
+    subType: { type: String, enum: ["normal", "source_destination"], default: "normal" },
+    sourceSquare: String,      // e.g., "a5", the specific piece the user must move
+    destinationSquare: String, // e.g., "e6", the ultimate destination for the piece
+  },
+
   // Source tracking
   source: {
     type: String,
