@@ -768,7 +768,7 @@ const validatePuzzles = async (req, res) => {
             const fenResult = validateFen(puzzle.fen);
             if (!fenResult.valid) {
               reasons.push(`Invalid FEN: ${fenResult.message}`);
-            } else if (puzzle.type !== 'kids') {
+            } else if (puzzle.type !== 'kids' && puzzle.type !== 'capture') {
               const moveResult = validateSolutionMoves(
                 puzzle.fen,
                 puzzle.solutionMoves
