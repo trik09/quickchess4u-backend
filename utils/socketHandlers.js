@@ -130,14 +130,24 @@ const buildRedisLeaderboard = async (competitionId) => {
 
 /* =========================================================
    GET LEADERBOARD  (Redis → DB merge, with DB fallback)
+   Supports optional server-side pagination via page/limit.
+   When page is provided, returns { leaderboard, total, page, limit }.
+   When page is omitted, returns the plain array (backward-compat).
 ========================================================= */
-const getCurrentLeaderboard = async (competitionId, limit = 200) => {
+const getCurrentLeaderboard = async (competitionId, limit = 200, page = null) => {
   const key     = leaderboardKey(competitionId);
   const metaKey = leaderboardMetaKey(competitionId);
+  const paginated = page !== null;
+  const pageSize  = paginated ? limit : limit;
+  const offset    = paginated ? (page - 1) * pageSize : 0;
+  const rangeEnd  = paginated ? offset + pageSize - 1 : limit - 1;
 
   try {
-    // 1. Get ordered userId list from sorted set
-    const userIds = await redis.zrevrange(key, 0, limit - 1);
+    // 1. Get total count + ordered userId slice from sorted set
+    const [total, userIds] = await Promise.all([
+      redis.zcard(key),
+      redis.zrevrange(key, offset, rangeEnd),
+    ]);
 
     if (userIds?.length) {
       // 2. Fetch all metadata in one round-trip
@@ -160,14 +170,14 @@ const getCurrentLeaderboard = async (competitionId, limit = 200) => {
       });
 
       // 4. Merge Redis metadata + fresh DB data
-      return userIds
+      const leaderboard = userIds
         .map((uid, index) => {
           const metaRaw = metaResults[index]?.[1];
           const meta    = metaRaw ? JSON.parse(metaRaw) : null;
           const db      = dbMap.get(uid);
 
           return {
-            rank         : index + 1,
+            rank         : offset + index + 1,
             userId       : uid,
             username     : db?.username             ?? meta?.username     ?? null,
             name         : db?.userId?.name         ?? meta?.name         ?? null,
@@ -181,6 +191,9 @@ const getCurrentLeaderboard = async (competitionId, limit = 200) => {
           };
         })
         .filter(Boolean);
+
+      if (paginated) return { leaderboard, total, page, limit: pageSize };
+      return leaderboard;
     }
   } catch (error) {
     console.error(`[Leaderboard] Redis read error for ${competitionId}:`, error);
@@ -189,17 +202,27 @@ const getCurrentLeaderboard = async (competitionId, limit = 200) => {
   // ── DB fallback (Redis miss / error) ──────────────────────────────────────
   console.warn(`[Leaderboard] Falling back to DB for ${competitionId}`);
 
-  const participants = await ParticipantModel.find({ competitionId })
-    .select("userId username score puzzlesSolved timeSpent status submittedAt")
-    .sort({ puzzlesSolved: -1, timeSpent: 1, score: -1 })
-    .limit(limit)
-    .populate("userId", "name avatar")
-    .lean();
+  const skip = paginated ? offset : 0;
+  const dbLimit = paginated ? pageSize : limit;
 
-  if (!participants.length) return [];
+  const [total, participants] = await Promise.all([
+    ParticipantModel.countDocuments({ competitionId }),
+    ParticipantModel.find({ competitionId })
+      .select("userId username score puzzlesSolved timeSpent status submittedAt")
+      .sort({ puzzlesSolved: -1, timeSpent: 1, score: -1 })
+      .skip(skip)
+      .limit(dbLimit)
+      .populate("userId", "name avatar")
+      .lean(),
+  ]);
+
+  if (!participants.length) {
+    if (paginated) return { leaderboard: [], total: 0, page, limit: pageSize };
+    return [];
+  }
 
   const leaderboard = participants.map((p, index) => ({
-    rank         : index + 1,
+    rank         : skip + index + 1,
     userId       : p.userId?._id?.toString(),
     username     : p.username,
     name         : p.userId?.name,
@@ -222,6 +245,7 @@ const getCurrentLeaderboard = async (competitionId, limit = 200) => {
     }
   });
 
+  if (paginated) return { leaderboard, total, page, limit: pageSize };
   return leaderboard;
 };
 
@@ -324,15 +348,20 @@ const handleCompetitionEnd = async (io, competitionId) => {
         );
       }
 
-      // Clean up BOTH Redis keys
-      const pipeline = redis.pipeline();
-      pipeline.del(leaderboardKey(competitionId));
-      pipeline.del(leaderboardMetaKey(competitionId));
-      await pipeline.exec();
-
-      console.log(
-        `✅ Competition ${competitionId} final results saved and cleaned up.`
-      );
+      // Clean up BOTH Redis keys — delay 5 minutes so the leaderboard
+      // page can still read from Redis immediately after competition ends
+      // instead of hitting the slower DB fallback.
+      setTimeout(async () => {
+        try {
+          const pipeline = redis.pipeline();
+          pipeline.del(leaderboardKey(competitionId));
+          pipeline.del(leaderboardMetaKey(competitionId));
+          await pipeline.exec();
+          console.log(`🧹 Redis leaderboard cleaned up for ${competitionId}`);
+        } catch (err) {
+          console.error("[Leaderboard] Redis cleanup error:", err);
+        }
+      }, 5 * 60 * 1000); // 5 minutes
     } catch (err) {
       console.error(
         `[Leaderboard] Error saving final results for ${competitionId}:`,

@@ -4,6 +4,7 @@ import PuzzleSolutionModel from "../models/PuzzleSolutionSchema.js";
 import PuzzleAttemptModel from "../models/PuzzleAttemptSchema.js";
 import PuzzleModel from "../models/PuzzleSchema.js";
 import UserModel from "../models/UserSchema.js";
+import CompetitionRankingModel from "../models/CompetitionRankingSchema.js";
 import { io } from "../index.js";
 import redis from "../config/redis.js";
 
@@ -574,6 +575,10 @@ export const getLiveLeaderboard = async (req, res) => {
     const { competitionId } = req.params;
     const userId = req.user?._id;
 
+    // Server-side pagination params
+    const page  = req.query.page  ? parseInt(req.query.page,  10) : null;
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : (page ? 10 : 200);
+
     // Fetch competition with minimal fields
     const competition = await CompetitionModel.findById(competitionId)
       .select("name status startTime endTime")
@@ -586,9 +591,57 @@ export const getLiveLeaderboard = async (req, res) => {
       });
     }
 
-    // Run leaderboard + participant queries in parallel
-    const [leaderboard, participant] = await Promise.all([
-      getCurrentLeaderboard(competitionId),
+    const isEnded = competition.status === "ENDED" || competition.status === "ended";
+
+    // ── ENDED: serve from CompetitionRankingModel (pre-sorted, indexed, fast) ──
+    if (isEnded) {
+      const skip = page ? (page - 1) * limit : 0;
+
+      const [total, rankings] = await Promise.all([
+        CompetitionRankingModel.countDocuments({ competitionId }),
+        CompetitionRankingModel.find({ competitionId })
+          .sort({ finalRank: 1 })
+          .skip(skip)
+          .limit(page ? limit : 200)
+          .lean(),
+      ]);
+
+      const leaderboard = rankings.map((r) => ({
+        rank         : r.finalRank,
+        userId       : r.userId?.toString(),
+        username     : r.username,
+        score        : r.finalScore   || 0,
+        puzzlesSolved: r.puzzlesSolved || 0,
+        timeSpent    : r.totalTime    || 0,
+        status       : "SUBMITTED",
+        submittedAt  : r.ENDEDAt,
+      }));
+
+      return res.json({
+        success: true,
+        competition: {
+          id: competition._id,
+          name: competition.name,
+          status: competition.status,
+          startTime: competition.startTime,
+          endTime: competition.endTime,
+        },
+        competitionState: competition.status,
+        participantState: "NOT_JOINED",
+        leaderboard,
+        ...(page && {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        }),
+        serverTime: Date.now(),
+      });
+    }
+
+    // ── LIVE / UPCOMING: serve from Redis (with DB merge) ──────────────────
+    const [leaderboardResult, participant] = await Promise.all([
+      getCurrentLeaderboard(competitionId, limit, page),
       userId
         ? ParticipantModel.findOne({ competitionId, userId })
           .select("status")
@@ -597,6 +650,9 @@ export const getLiveLeaderboard = async (req, res) => {
     ]);
 
     const participantState = participant ? participant.status : "NOT_JOINED";
+
+    const isPaginated = page !== null;
+    const leaderboard = isPaginated ? leaderboardResult.leaderboard : leaderboardResult;
 
     res.json({
       success: true,
@@ -610,6 +666,12 @@ export const getLiveLeaderboard = async (req, res) => {
       competitionState: competition.status,
       participantState,
       leaderboard,
+      ...(isPaginated && {
+        total: leaderboardResult.total,
+        page:  leaderboardResult.page,
+        limit: leaderboardResult.limit,
+        totalPages: Math.ceil(leaderboardResult.total / leaderboardResult.limit),
+      }),
       serverTime: Date.now(),
     });
   } catch (error) {
