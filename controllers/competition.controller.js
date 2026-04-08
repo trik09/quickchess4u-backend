@@ -117,7 +117,7 @@ export const getCompetitions = async (req, res) => {
         .select(
           "name description status startTime endTime duration puzzles participants maxParticipants createdAt"
         )
-        .populate("puzzles", "title difficulty category type")
+        .populate("puzzles")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNum)
