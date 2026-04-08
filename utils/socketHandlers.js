@@ -272,15 +272,15 @@ const autoStartCompetition = async (io, competition) => {
    COMPETITION END HANDLER
 ========================================================= */
 const handleCompetitionEnd = async (io, competitionId) => {
-  // Fast emit using Redis leaderboard
-  const redisLeaderboard = await getCurrentLeaderboard(competitionId);
-
+  // Emit IMMEDIATELY — no DB/Redis reads before this.
+  // Clients already have the live leaderboard from continuous socket updates.
+  // The socket event just signals "time is up" so the lobby navigates instantly.
   io.to(`competition_${competitionId}`).emit("competitionEnded", {
-    leaderboard: redisLeaderboard,
+    leaderboard: [],   // clients use their local participants state
     message    : "Competition ended! Calculating final results...",
   });
 
-  // Heavy DB work in background
+  // All heavy work happens in background AFTER the emit
   (async () => {
     try {
       await CompetitionModel.findByIdAndUpdate(competitionId, {
@@ -324,14 +324,22 @@ const handleCompetitionEnd = async (io, competitionId) => {
         );
       }
 
-      // Clean up BOTH Redis keys
-      const pipeline = redis.pipeline();
-      pipeline.del(leaderboardKey(competitionId));
-      pipeline.del(leaderboardMetaKey(competitionId));
-      await pipeline.exec();
+      // Clean up BOTH Redis keys — delay 5 minutes so the leaderboard
+      // page can still read from Redis immediately after competition ends.
+      setTimeout(async () => {
+        try {
+          const pipeline = redis.pipeline();
+          pipeline.del(leaderboardKey(competitionId));
+          pipeline.del(leaderboardMetaKey(competitionId));
+          await pipeline.exec();
+          console.log(`🧹 Redis leaderboard cleaned up for ${competitionId}`);
+        } catch (err) {
+          console.error("[Leaderboard] Redis cleanup error:", err);
+        }
+      }, 5 * 60 * 1000);
 
       console.log(
-        `✅ Competition ${competitionId} final results saved and cleaned up.`
+        `✅ Competition ${competitionId} final results saved.`
       );
     } catch (err) {
       console.error(

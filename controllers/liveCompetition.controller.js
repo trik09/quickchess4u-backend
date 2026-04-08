@@ -950,10 +950,11 @@ export const getLobbyState = async (req, res) => {
     // 4. Participant state
     const participantState = participant?.status || "NOT_JOINED";
 
-    // 5. Leaderboard
-    console.time("leaderboardQuery");
-    const leaderboard = await getCurrentLeaderboard(competitionId);
-    console.timeEnd("leaderboardQuery");
+    // 5. Leaderboard — skip for ENDED competitions (Leaderboard page handles that)
+    let leaderboard = [];
+    if (competitionState !== "ENDED") {
+      leaderboard = await getCurrentLeaderboard(competitionId);
+    }
 
     // 6. Response
     return res.json({
