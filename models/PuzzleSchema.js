@@ -14,7 +14,7 @@ const PuzzleSchema = new mongoose.Schema({
   type: {
     type: String,
     enum: ["normal", "capture", "illegal"],
-    default: "normal"
+    default: "nor mal"
   },
 
   // Difficulty & Rating
@@ -33,7 +33,7 @@ const PuzzleSchema = new mongoose.Schema({
     }],
     enemyPieces: [{
       square: String,
-      type: String // e.g., "p", "n", "r"
+      type: { type: String } // e.g., "p", "n", "r"
     }]
   },
 
@@ -71,7 +71,7 @@ const PuzzleSchema = new mongoose.Schema({
 
 // Index for faster queries
 PuzzleSchema.index({ type: 1, category: 1 });
-PuzzleSchema.index({isValidated: 1 });
+PuzzleSchema.index({ isValidated: 1 });
 
 const PuzzleModel = mongoose.model("Puzzle", PuzzleSchema);
 
