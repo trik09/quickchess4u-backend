@@ -26,10 +26,15 @@ const PuzzleSchema = new mongoose.Schema({
     mode: { type: String, enum: ["objects", "pieces"], default: "objects" },
     piece: String, // Player piece: e.g., "n" for knight, "r" for rook
     playerSide: { type: String, enum: ["w", "b"], default: "w" },
-    startSquare: String, // e.g., "e4"
+    startSquare: String, // e.g., "e4" (Legacy)
+    playerPieces: [{
+      square: String,
+      type: { type: String }, // e.g., "n", "r"
+      color: { type: String, enum: ["w", "b"] }
+    }],
     targets: [{
       square: String,
-      item: { type: String, enum: ["pizza", "chocolate", "star", "burger"] }
+      item: { type: String, enum: ["pizza", "chocolate", "star", "burger", "p", "n", "b", "r", "q", "k"] }
     }],
     enemyPieces: [{
       square: String,
@@ -66,12 +71,15 @@ const PuzzleSchema = new mongoose.Schema({
   // false = not yet validated (newly imported), true = already scanned
   isValidated: { type: Boolean, default: false },
 
+  isDailyTraining: { type: Boolean, default: false },
+
   createdAt: { type: Date, default: Date.now }
 });
 
 // Index for faster queries
 PuzzleSchema.index({ type: 1, category: 1 });
 PuzzleSchema.index({ isValidated: 1 });
+PuzzleSchema.index({ isDailyTraining: 1 });
 
 const PuzzleModel = mongoose.model("Puzzle", PuzzleSchema);
 

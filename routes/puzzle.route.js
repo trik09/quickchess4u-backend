@@ -13,7 +13,8 @@ import {
   exportPuzzles,
   deleteMultiplePuzzles,
   validatePuzzles,
-  deleteInvalidPuzzles
+  deleteInvalidPuzzles,
+  toggleDailyTraining
 } from "../controllers/puzzle.controller.js";
 import isAdmin from "../middleware/admin.middleware.js";
 
@@ -29,6 +30,7 @@ router.put("/update-puzzle/:id", isAdmin, updatePuzzle);
 router.delete("/delete-all-puzzles", isAdmin, deleteAllPuzzles);
 router.post("/delete-multiple-puzzles", isAdmin, deleteMultiplePuzzles);
 router.delete("/delete-puzzle/:id", isAdmin, deletePuzzle);
+router.patch("/toggle-daily/:id", isAdmin, toggleDailyTraining);
 
 // Validation routes
 router.get("/validate-puzzles", isAdmin, validatePuzzles);

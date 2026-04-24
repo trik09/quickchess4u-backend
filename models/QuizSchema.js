@@ -30,7 +30,8 @@ const QuizSchema = new mongoose.Schema({
   // Column Matching Specific Fields
   pairs: [{
     leftItem: String,
-    rightItem: String
+    rightItem: String,
+    correctAnswer: String
   }],
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,

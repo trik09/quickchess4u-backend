@@ -270,12 +270,14 @@ const getPuzzles = async (req, res) => {
       category = '',
       difficulty = '',
       level = '',
+      isDailyTraining = '',
     } = req.query;
 
     const query = {};
     if (category && category !== 'all') query.category = { $regex: category, $options: 'i' };
     if (difficulty && difficulty !== 'all') query.difficulty = difficulty.toLowerCase();
     if (level && level !== 'all') query.level = parseInt(level);
+    if (isDailyTraining !== '') query.isDailyTraining = isDailyTraining === 'true';
     if (search) {
       query.$or = [
         { title: { $regex: search, $options: 'i' } },
@@ -875,6 +877,26 @@ const deleteInvalidPuzzles = async (req, res) => {
   }
 };
 
+const toggleDailyTraining = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isDailyTraining } = req.body;
+
+    const puzzle = await PuzzleModel.findById(id);
+    if (!puzzle) {
+      return res.status(404).json({ message: "Puzzle not found" });
+    }
+
+    puzzle.isDailyTraining = isDailyTraining;
+    await puzzle.save();
+
+    res.status(200).json({ message: "Puzzle daily training status updated", puzzle });
+  } catch (error) {
+    console.error("Error toggling daily training:", error);
+    res.status(500).json({ message: "Failed to toggle daily training" });
+  }
+};
+
 export {
   createPuzzle,
   getPuzzles,
@@ -889,5 +911,6 @@ export {
   exportPuzzles,
   deleteMultiplePuzzles,
   validatePuzzles,
-  deleteInvalidPuzzles
+  deleteInvalidPuzzles,
+  toggleDailyTraining
 }

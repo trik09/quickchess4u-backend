@@ -263,10 +263,16 @@ export const getExamResults = async (req, res) => {
     const { id } = req.params;
     const userId = req.user._id;
 
-    const exam = await ExamModel.findById(id).populate("chapters.quizIds");
+    const exam = await ExamModel.findById(id)
+      .populate("chapters.quizIds")
+      .populate("participants.user", "name username avatar profilePicture title isPremium");
+    
     if (!exam) return res.status(404).json({ message: "Exam not found" });
 
-    const participant = exam.participants.find(p => p.user.toString() === userId.toString());
+    const participant = exam.participants.find(p => {
+      const pUserId = p.user._id ? p.user._id.toString() : p.user.toString();
+      return pUserId === userId.toString();
+    });
     if (!participant) return res.status(404).json({ message: "You have not participated in this exam." });
 
     res.status(200).json({
