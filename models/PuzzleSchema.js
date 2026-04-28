@@ -14,7 +14,7 @@ const PuzzleSchema = new mongoose.Schema({
   type: {
     type: String,
     enum: ["normal", "capture", "illegal"],
-    default: "nor mal"
+    default: "normal"
   },
 
   // Difficulty & Rating
@@ -65,7 +65,7 @@ const PuzzleSchema = new mongoose.Schema({
   },
 
   // Who plays the first solution move: 'human' (default) or 'computer'
-  firstMoveBy: { type: String, enum: ["human", "computer"], default: "human" },
+  firstMoveBy: { type: String, enum: ["human", "computer", "w", "b"], default: "human" },
 
   // Tracks whether this puzzle has been through chess.js validation scan
   // false = not yet validated (newly imported), true = already scanned

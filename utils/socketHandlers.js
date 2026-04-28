@@ -272,11 +272,9 @@ const autoStartCompetition = async (io, competition) => {
    COMPETITION END HANDLER
 ========================================================= */
 const handleCompetitionEnd = async (io, competitionId) => {
-  // Emit IMMEDIATELY — no DB/Redis reads before this.
-  // Clients already have the live leaderboard from continuous socket updates.
-  // The socket event just signals "time is up" so the lobby navigates instantly.
+  const leaderboard = await getCurrentLeaderboard(competitionId);
   io.to(`competition_${competitionId}`).emit("competitionEnded", {
-    leaderboard: redisLeaderboard,
+    leaderboard,
     message: "Competition ended! Calculating final results...",
   });
 

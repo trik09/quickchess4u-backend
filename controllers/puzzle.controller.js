@@ -191,7 +191,7 @@ const createPuzzle = async (req, res) => {
       source: 'manual',
       level: level || 1,
       rating: rating || 400,
-      firstMoveBy: firstMoveBy === 'computer' ? 'computer' : 'human',
+      firstMoveBy: ['computer', 'w', 'b'].includes(firstMoveBy) ? firstMoveBy : 'human',
       isValidated: true  // single create goes through full chess.js validation
     };
 
@@ -636,7 +636,7 @@ const bulkCreatePuzzles = async (req, res) => {
           illegalConfig: puzzle.illegalConfig,
           initialMove: undefined,
           firstMoveBy:
-            puzzle.firstMoveBy === 'computer' ? 'computer' : 'human',
+            ['computer', 'w', 'b'].includes(puzzle.firstMoveBy) ? puzzle.firstMoveBy : 'human',
           createdBy: req.admin._id,
           source: 'manual',
           createdAt: new Date()
